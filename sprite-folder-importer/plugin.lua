@@ -1,4 +1,5 @@
 local PLUGIN_ID = "folder_importer_v1"
+local PLUGIN_KEY = "local/sprite-folder-importer"
 local MENU_GROUP_ID = "folder_importer_group"
 local MENU_TITLE = "Folder Importer"
 
@@ -66,12 +67,12 @@ local function serializeMeta(meta)
   return table.concat(lines, "\n")
 end
 
-local function parseMeta(sprite)
-  if not sprite or not sprite.data or sprite.data == "" then
+local function parseMetaText(text)
+  if not text or text == "" then
     return nil
   end
 
-  local lines = splitLines(sprite.data)
+  local lines = splitLines(text)
   if #lines < 1 or lines[1] ~= PLUGIN_ID then
     return nil
   end
@@ -93,6 +94,108 @@ local function parseMeta(sprite)
   end
 
   return result
+end
+
+local function getPluginProperties(object)
+  return object.properties(PLUGIN_KEY)
+end
+
+local function readPropertyString(value)
+  if value == nil then
+    return ""
+  end
+  return tostring(value)
+end
+
+local function parseMeta(sprite)
+  if not sprite then
+    return nil
+  end
+
+  local fromData = parseMetaText(sprite.data)
+  local props = getPluginProperties(sprite)
+  local fromProps = nil
+
+  local propVersion = readPropertyString(props.version)
+  local propRoot = normalize(readPropertyString(props.rootPath))
+  local propWork = normalize(readPropertyString(props.workFile))
+  local propManaged = props.managed == true or propVersion == PLUGIN_ID
+
+  if propManaged or propRoot ~= "" or propWork ~= "" then
+    fromProps = {
+      rootPath = propRoot,
+      workFile = propWork,
+    }
+  end
+
+  if not fromData and not fromProps then
+    return nil
+  end
+
+  return {
+    rootPath = normalize((fromData and fromData.rootPath) or (fromProps and fromProps.rootPath) or ""),
+    workFile = normalize((fromData and fromData.workFile) or (fromProps and fromProps.workFile) or ""),
+  }
+end
+
+local function setSpriteMeta(sprite, meta)
+  local normalized = {
+    rootPath = normalize(meta.rootPath or ""),
+    workFile = normalize(meta.workFile or ""),
+  }
+
+  sprite.data = serializeMeta(normalized)
+
+  local props = getPluginProperties(sprite)
+  props.version = PLUGIN_ID
+  props.managed = true
+  props.rootPath = normalized.rootPath
+  props.workFile = normalized.workFile
+
+  return normalized
+end
+
+local function setSliceRelativePath(slice, relPath)
+  local normalized = toForwardSlashes(relPath or "")
+  slice.data = normalized
+
+  local props = getPluginProperties(slice)
+  props.version = PLUGIN_ID
+  props.relativePath = normalized
+
+  return normalized
+end
+
+local function getSliceRelativePath(slice)
+  if slice.data and slice.data ~= "" then
+    return toForwardSlashes(slice.data)
+  end
+
+  local props = getPluginProperties(slice)
+  local relPath = readPropertyString(props.relativePath)
+  if relPath ~= "" then
+    return toForwardSlashes(relPath)
+  end
+
+  return ""
+end
+
+local function hasManagedSlices(sprite)
+  if not sprite then
+    return false
+  end
+
+  for _, slice in ipairs(sprite.slices) do
+    if getSliceRelativePath(slice) ~= "" then
+      return true
+    end
+  end
+
+  return false
+end
+
+local function isManagedSprite(sprite)
+  return parseMeta(sprite) ~= nil or hasManagedSlices(sprite)
 end
 
 local function isImageFile(path)
@@ -355,6 +458,134 @@ local function defaultWorkFile(rootPath)
   return app.fs.joinPath(base, "_folder_importer_work.aseprite")
 end
 
+local function ensureWorkFileExtension(path)
+  local workFile = normalize(path)
+  if workFile == "" then
+    return ""
+  end
+
+  local ext = app.fs.fileExtension(workFile):lower()
+  if ext == "ase" or ext == "aseprite" then
+    return workFile
+  end
+
+  if ext == "" then
+    return workFile .. ".aseprite"
+  end
+
+  return workFile
+end
+
+local extractOutputRootFromDialog
+
+local function inferMeta(sprite)
+  local meta = parseMeta(sprite) or {
+    rootPath = "",
+    workFile = "",
+  }
+
+  if meta.rootPath == "" and sprite and sprite.filename and sprite.filename ~= "" then
+    meta.rootPath = normalize(app.fs.filePath(sprite.filename))
+  end
+
+  if meta.rootPath == "" then
+    meta.rootPath = app.fs.userDocsPath
+  end
+
+  if meta.workFile == "" then
+    if sprite and sprite.filename and sprite.filename ~= "" then
+      meta.workFile = ensureWorkFileExtension(sprite.filename)
+    else
+      meta.workFile = defaultWorkFile(meta.rootPath)
+    end
+  else
+    meta.workFile = ensureWorkFileExtension(meta.workFile)
+  end
+
+  return meta
+end
+
+local function needsSaveTargets(meta)
+  return not meta or meta.rootPath == "" or meta.workFile == ""
+end
+
+local function chooseSaveTargets(sprite, opts)
+  local initialMeta = inferMeta(sprite)
+  local accepted = false
+  local dlg = Dialog {
+    title = opts.title or "Choose Save Targets",
+  }
+
+  if opts.message then
+    dlg:label {
+      id = "message",
+      label = "Info",
+      text = opts.message,
+    }
+  end
+
+  dlg:file {
+    id = "output_pick",
+    label = "Export root",
+    title = "Type a folder path or pick a file inside the export root folder",
+    filename = initialMeta.rootPath,
+    open = true,
+    entry = true,
+  }
+  dlg:file {
+    id = "work_file",
+    label = "Work file",
+    title = "Choose the .aseprite work file",
+    filename = initialMeta.workFile,
+    save = true,
+    entry = true,
+    filetypes = { "aseprite", "ase" },
+  }
+  dlg:newrow()
+  dlg:button {
+    text = "OK",
+    onclick = function()
+      accepted = true
+      dlg:close()
+    end,
+  }
+  dlg:button {
+    text = "Cancel",
+    onclick = function()
+      dlg:close()
+    end,
+  }
+
+  dlg:show()
+
+  if not accepted then
+    return nil, "Cancelled."
+  end
+
+  local data = dlg.data
+  local outputRoot = extractOutputRootFromDialog(data, initialMeta.rootPath)
+  if not outputRoot then
+    return nil, "Please choose an export root folder."
+  end
+
+  local workFile = ensureWorkFileExtension(data.work_file or "")
+  if workFile == "" then
+    return nil, "Please choose a .aseprite work file."
+  end
+
+  local parent = app.fs.filePath(workFile)
+  if parent and parent ~= "" and not ensureDirectory(parent) then
+    return nil, "Cannot create work file folder:\n" .. parent
+  end
+
+  local meta = {
+    rootPath = outputRoot,
+    workFile = workFile,
+  }
+
+  return setSpriteMeta(sprite, meta)
+end
+
 local function importFromFolders(selectedDirs)
   local result, err = collectEntries(selectedDirs)
   if not result then
@@ -378,13 +609,13 @@ local function importFromFolders(selectedDirs)
 
     local slice = sprite:newSlice(Rectangle(item.x, item.y, item.w, item.h))
     slice.name = item.entry.sliceName
-    slice.data = item.entry.relPath
+    setSliceRelativePath(slice, item.entry.relPath)
   end
 
-  sprite.data = serializeMeta {
+  setSpriteMeta(sprite, {
     rootPath = result.rootPath,
     workFile = defaultWorkFile(result.rootPath),
-  }
+  })
 
   app.sprite = sprite
   app.refresh()
@@ -399,7 +630,7 @@ local function importFromFolders(selectedDirs)
   }
 end
 
-local function extractOutputRootFromDialog(data, fallbackRoot)
+extractOutputRootFromDialog = function(data, fallbackRoot)
   if data.use_original_root then
     if fallbackRoot and fallbackRoot ~= "" then
       return fallbackRoot
@@ -429,10 +660,11 @@ local function extractOutputRootFromDialog(data, fallbackRoot)
 end
 
 local function exportSlices(sprite, opts)
-  local meta = parseMeta(sprite)
-  if not meta then
+  if not isManagedSprite(sprite) then
     return false, "Active sprite is not a Folder Importer sprite."
   end
+
+  local meta = inferMeta(sprite)
 
   local outputRoot = normalize(opts.outputRoot or meta.rootPath)
   if outputRoot == "" then
@@ -447,7 +679,7 @@ local function exportSlices(sprite, opts)
   local exported = 0
 
   for _, slice in ipairs(sprite.slices) do
-    local relPath = slice.data
+    local relPath = getSliceRelativePath(slice)
     if not relPath or relPath == "" then
       relPath = (slice.name or "slice") .. ".png"
     end
@@ -472,10 +704,11 @@ local function exportSlices(sprite, opts)
   if workFile == "" then
     workFile = defaultWorkFile(outputRoot)
   end
+  workFile = ensureWorkFileExtension(workFile)
 
   meta.rootPath = outputRoot
   meta.workFile = workFile
-  sprite.data = serializeMeta(meta)
+  setSpriteMeta(sprite, meta)
   sprite:saveAs(workFile)
 
   return true, {
@@ -495,14 +728,15 @@ local function openExportDialog()
     return
   end
 
-  local meta = parseMeta(sprite)
-  if not meta then
+  if not isManagedSprite(sprite) then
     app.alert {
       title = MENU_TITLE,
       text = "Active sprite is not created by Folder Importer.",
     }
     return
   end
+
+  local meta = inferMeta(sprite)
 
   local dlg
   dlg = Dialog { title = "Export Slices" }
@@ -568,6 +802,49 @@ local function openExportDialog()
     end,
   }
   dlg:show()
+end
+
+local function relinkSaveTargets()
+  local sprite = app.sprite
+  if not sprite then
+    app.alert {
+      title = MENU_TITLE,
+      text = "No active sprite.",
+    }
+    return
+  end
+
+  if not isManagedSprite(sprite) then
+    app.alert {
+      title = MENU_TITLE,
+      text = "Active sprite is not created by Folder Importer.",
+    }
+    return
+  end
+
+  local meta, err = chooseSaveTargets(sprite, {
+    title = "Relink Save Targets",
+    message = "Reassign export root and .aseprite work file. Useful if metadata was lost or paths changed.",
+  })
+
+  if not meta then
+    if err ~= "Cancelled." then
+      app.alert {
+        title = MENU_TITLE,
+        text = err,
+      }
+    end
+    return
+  end
+
+  app.alert {
+    title = MENU_TITLE,
+    text = {
+      "Save targets updated.",
+      string.format("Export root: %s", meta.rootPath),
+      string.format("Work file: %s", meta.workFile),
+    },
+  }
 end
 
 local function foldersToText(list)
@@ -762,8 +1039,7 @@ local function setupSaveHook()
       return
     end
 
-    local meta = parseMeta(sprite)
-    if not meta then
+    if not isManagedSprite(sprite) then
       return
     end
 
@@ -771,8 +1047,22 @@ local function setupSaveHook()
     SAVE_GUARD = true
 
     local ok, resultOrErr = pcall(function()
+      local storedMeta = parseMeta(sprite)
+      local meta = inferMeta(sprite)
+      if needsSaveTargets(storedMeta) then
+        local chosen, err = chooseSaveTargets(sprite, {
+          title = "Choose Save Targets",
+          message = "Metadata is missing or incomplete. Choose where separated files and the .aseprite work file should be saved.",
+        })
+        if not chosen then
+          error(err)
+        end
+        meta = chosen
+      end
+
       local okExport, infoOrErr = exportSlices(sprite, {
         outputRoot = meta.rootPath,
+        workFile = meta.workFile,
       })
       if not okExport then
         error(infoOrErr)
@@ -812,6 +1102,14 @@ function init(plugin)
     title = "Export Slices To Folder",
     onclick = function()
       openExportDialog()
+    end,
+  })
+
+  registerCommand(plugin, {
+    id = "RelinkFolderImporterSaveTargets",
+    title = "Relink Save Targets",
+    onclick = function()
+      relinkSaveTargets()
     end,
   })
 

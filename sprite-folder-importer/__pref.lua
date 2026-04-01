@@ -1,0 +1,1 @@
+return {lastFolders={"D:\\Downloads\\CasualtiesUnknownV5.1Demo\\CasualtiesUnknownDemo\\BepInEx\\plugins\\CustomSprites\\Head\\","D:\\Downloads\\CasualtiesUnknownV5.1Demo\\CasualtiesUnknownDemo\\BepInEx\\plugins\\CustomSprites\\Body\\"}}
