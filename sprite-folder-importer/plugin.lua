@@ -586,6 +586,18 @@ local function chooseSaveTargets(sprite, opts)
   return setSpriteMeta(sprite, meta)
 end
 
+local function activateSliceTool()
+  local ok = pcall(function()
+    app.tool = "slice"
+  end)
+
+  if not ok then
+    pcall(function()
+      app.command.ChangeTool { tool = "slice" }
+    end)
+  end
+end
+
 local function importFromFolders(selectedDirs)
   local result, err = collectEntries(selectedDirs)
   if not result then
@@ -619,6 +631,7 @@ local function importFromFolders(selectedDirs)
 
   app.sprite = sprite
   app.refresh()
+  activateSliceTool()
 
   app.alert {
     title = MENU_TITLE,
@@ -627,6 +640,64 @@ local function importFromFolders(selectedDirs)
       string.format("Canvas: %dx%d", layout.width, layout.height),
       string.format("Export root: %s", result.rootPath),
     },
+  }
+end
+
+local function inspectMetadata()
+  local sprite = app.sprite
+  if not sprite then
+    app.alert {
+      title = MENU_TITLE,
+      text = "No active sprite.",
+    }
+    return
+  end
+
+  if not isManagedSprite(sprite) then
+    app.alert {
+      title = MENU_TITLE,
+      text = "Active sprite is not created by Folder Importer.",
+    }
+    return
+  end
+
+  local meta = inferMeta(sprite)
+  local lines = {
+    "Folder Importer Metadata",
+    "",
+    "Root: " .. (meta.rootPath or ""),
+    "Work: " .. (meta.workFile or ""),
+    "",
+    "Slices: " .. tostring(#sprite.slices),
+  }
+
+  local maxPreview = 30
+  for i, slice in ipairs(sprite.slices) do
+    if i > maxPreview then
+      lines[#lines + 1] = string.format("... (%d more)", #sprite.slices - maxPreview)
+      break
+    end
+
+    local relPath = getSliceRelativePath(slice)
+    if relPath == "" then
+      relPath = "(missing)"
+    end
+
+    lines[#lines + 1] = string.format(
+      "%d) %s -> %s [%d,%d,%d,%d]",
+      i,
+      slice.name or "(unnamed)",
+      relPath,
+      slice.bounds.x,
+      slice.bounds.y,
+      slice.bounds.width,
+      slice.bounds.height
+    )
+  end
+
+  app.alert {
+    title = MENU_TITLE,
+    text = lines,
   }
 end
 
@@ -1110,6 +1181,14 @@ function init(plugin)
     title = "Relink Save Targets",
     onclick = function()
       relinkSaveTargets()
+    end,
+  })
+
+  registerCommand(plugin, {
+    id = "InspectFolderImporterMetadata",
+    title = "Inspect Metadata",
+    onclick = function()
+      inspectMetadata()
     end,
   })
 
