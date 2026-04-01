@@ -1,0 +1,21 @@
+{
+  "name": "sprite-folder-importer",
+  "displayName": "Sprite Folder Importer",
+  "description": "Import images from folders into one sprite with slices, then export back to original structure.",
+  "version": "0.1.0",
+  "author": {
+    "name": "LaysDragon"
+  },
+  "publisher": "local",
+  "license": "MIT",
+  "categories": [
+    "Scripts"
+  ],
+  "contributes": {
+    "scripts": [
+      {
+        "path": "./plugin.lua"
+      }
+    ]
+  }
+}

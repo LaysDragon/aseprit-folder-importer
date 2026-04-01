@@ -1,0 +1,35 @@
+Sprite Folder Importer - Development Install and Packaging
+
+Development install (recommended while building):
+1. Ensure this folder exists:
+   %APPDATA%\Aseprite\extensions\sprite-folder-importer
+2. Place these files in that folder:
+   - package.json
+   - plugin.lua
+3. Restart Aseprite.
+4. Open File menu and look for:
+   Folder Importer
+   - Import Folders As Slices
+   - Export Slices To Folder
+
+How import works:
+- Add one folder: that folder becomes root.
+- Add multiple folders: common parent becomes root, so folder names are included in slice names.
+- Scan is recursive for all nested subfolders.
+- Source image dimensions are preserved (no scaling).
+- Images are packed in a near-square layout.
+
+How save/export works:
+- For sprites created by this plugin, pressing Save will:
+  1) Export all slices back to separated files
+  2) Recreate folder structure under the stored root path
+  3) Save one .aseprite workspace file for future editing
+
+Manual export:
+- Use File > Folder Importer > Export Slices To Folder
+
+Packaging later (.aseprite-extension):
+1. Zip the folder contents (package.json + plugin.lua + optional docs).
+2. Rename the zip file extension from .zip to .aseprite-extension
+3. Install by double-clicking the file or via:
+   Edit > Preferences > Extensions > Add Extension
