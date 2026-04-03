@@ -144,13 +144,24 @@ local function setSpriteMeta(sprite, meta)
     workFile = normalize(meta.workFile or ""),
   }
 
-  sprite.data = serializeMeta(normalized)
+  local targetData = serializeMeta(normalized)
+  if sprite.data ~= targetData then
+    sprite.data = targetData
+  end
 
   local props = getPluginProperties(sprite)
-  props.version = PLUGIN_ID
-  props.managed = true
-  props.rootPath = normalized.rootPath
-  props.workFile = normalized.workFile
+  if readPropertyString(props.version) ~= PLUGIN_ID then
+    props.version = PLUGIN_ID
+  end
+  if props.managed ~= true then
+    props.managed = true
+  end
+  if normalize(readPropertyString(props.rootPath)) ~= normalized.rootPath then
+    props.rootPath = normalized.rootPath
+  end
+  if normalize(readPropertyString(props.workFile)) ~= normalized.workFile then
+    props.workFile = normalized.workFile
+  end
 
   return normalized
 end
